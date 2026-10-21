@@ -1,46 +1,60 @@
-import { isDepartment } from "@/types/employee";
-import {
-  createEmployee,
-  DuplicateEmailError,
-  listEmployees,
-} from "@/lib/employee-service";
-import { errorResponse, handleErrors, readJson } from "@/lib/utils";
-import { validateEmployeeInput } from "@/lib/validations/employee-schema";
+import { Pool } from "pg";
 
-// GET /api/employees?search=&department=&page=&pageSize=&sort=recent|name
-export async function GET(request: Request) {
-  return handleErrors(request, async () => {
-    const params = new URL(request.url).searchParams;
-    const department = params.get("department") ?? "";
+// One shared connection pool (kept on globalThis so hot reloads don't open more).
+const g = globalThis as unknown as { pool?: Pool };
+const pool = (g.pool ??= new Pool({ connectionString: process.env.DATABASE_URL }));
 
-    const result = await listEmployees({
-      search: params.get("search") ?? "",
-      department: isDepartment(department) ? department : "",
-      page: Number(params.get("page")) || 1,
-      pageSize: Number(params.get("pageSize")) || 10,
-      sort: params.get("sort") === "name" ? "name" : "recent",
-    });
+const COLUMNS = `id::text AS id, full_name AS "fullName", email, department, job_title AS "jobTitle",
+  salary::float8 AS salary, to_char(joining_date, 'YYYY-MM-DD') AS "joiningDate"`;
 
-    return Response.json(result);
-  });
+async function run(work: () => Promise<Response>) {
+  try {
+    return await work();
+  } catch (error) {
+    const duplicate = (error as { code?: string }).code === "23505";
+    return Response.json(
+      { error: duplicate ? "An employee with this email already exists." : "Database error. Check DATABASE_URL in .env." },
+      { status: duplicate ? 409 : 500 },
+    );
+  }
 }
 
-// POST /api/employees
-export async function POST(request: Request) {
-  return handleErrors(request, async () => {
-    const validation = validateEmployeeInput(await readJson(request));
-    if (!validation.ok) {
-      return errorResponse("Please fix the highlighted fields.", 400, validation.errors);
-    }
-
-    try {
-      const data = await createEmployee(validation.value);
-      return Response.json({ data }, { status: 201 });
-    } catch (error) {
-      if (error instanceof DuplicateEmailError) {
-        return errorResponse(error.message, 409, { email: error.message });
-      }
-      throw error;
-    }
-  });
+// The six form fields, in the order the SQL expects them.
+async function fields(request: Request) {
+  const b = await request.json();
+  return [b.fullName, b.email, b.department, b.jobTitle, b.salary, b.joiningDate];
 }
+
+const id = (request: Request) => new URL(request.url).searchParams.get("id");
+
+export const GET = () =>
+  run(async () => {
+    const { rows } = await pool.query(`SELECT ${COLUMNS} FROM employees ORDER BY created_at DESC, id DESC`);
+    return Response.json({ data: rows });
+  });
+
+export const POST = (request: Request) =>
+  run(async () => {
+    const { rows } = await pool.query(
+      `INSERT INTO employees (full_name, email, department, job_title, salary, joining_date)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${COLUMNS}`,
+      await fields(request),
+    );
+    return Response.json({ data: rows[0] }, { status: 201 });
+  });
+
+export const PUT = (request: Request) =>
+  run(async () => {
+    await pool.query(
+      `UPDATE employees SET full_name = $2, email = $3, department = $4, job_title = $5, salary = $6, joining_date = $7
+       WHERE id = $1`,
+      [id(request), ...(await fields(request))],
+    );
+    return Response.json({ success: true });
+  });
+
+export const DELETE = (request: Request) =>
+  run(async () => {
+    await pool.query("DELETE FROM employees WHERE id = $1", [id(request)]);
+    return Response.json({ success: true });
+  });

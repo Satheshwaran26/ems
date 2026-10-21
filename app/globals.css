@@ -1,38 +1,7 @@
 @import "tailwindcss";
 
-/* Design tokens: change colours here and the whole app follows. */
-:root {
-  --background: #f6f7f9;
-  --foreground: #1f2328; /* charcoal */
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-
-  /* Primary accent (blue) */
-  --color-brand-50: #eff6ff;
-  --color-brand-100: #dbeafe;
-  --color-brand-500: #3b82f6;
-  --color-brand-600: #2563eb;
-  --color-brand-700: #1d4ed8;
-
-  --font-sans: var(--font-manrope);
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
-}
-
-/* One consistent, visible keyboard focus ring. */
-:focus-visible {
-  outline: 2px solid var(--color-brand-600);
-  outline-offset: 2px;
-}
-
-/* Native <dialog> elements ship with their own colours; inherit ours instead. */
-dialog {
-  color: inherit;
+  background: #f6f7f9;
+  color: #1f2328;
+  font-family: system-ui, sans-serif;
 }
