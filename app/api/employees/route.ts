@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { describe, validateEmployee } from "@/lib/validate";
+import { describe, validateEmployee } from "@/lib/employees";
 
 // Every response is { data, ... } on success or { error, fields? } on failure, and is never cached.
 // Other HTTP methods get an automatic 405 from Next.js.
@@ -58,8 +58,8 @@ function dbError(error: { code?: string; message: string }): never {
   if (code === "23505") throw new HttpError(409, "An employee with this email already exists.");
   if (["23514", "23502", "22003", "22P02", "22007", "22008"].includes(code)) throw new HttpError(400, "Some values are not allowed. Check the fields and try again.");
   if (code === "42501") throw new HttpError(403, "The database policies do not allow this action.");
-  if (["PGRST205", "42P01"].includes(code)) throw new HttpError(500, "The employees table is missing. Run supabase/schema.sql in the Supabase SQL Editor.");
-  if (["PGRST204", "42703"].includes(code)) throw new HttpError(500, "The database schema is out of date. Run supabase/schema.sql in the Supabase SQL Editor.");
+  if (["PGRST205", "42P01"].includes(code)) throw new HttpError(500, "The employees table is missing. Run the SQL from README.md in the Supabase SQL Editor.");
+  if (["PGRST204", "42703"].includes(code)) throw new HttpError(500, "The database schema is out of date. Run the SQL from README.md in the Supabase SQL Editor.");
   if (!code) throw new HttpError(503, "Could not reach the database. Try again in a moment.");
   throw new HttpError(500, "Database error.");
 }
@@ -111,7 +111,7 @@ const toEmployee = (r: Record<string, unknown>) => ({
   jobTitle: r.job_title,
   salary: Number(r.salary),
   joiningDate: r.joining_date,
-  version: r.version ?? undefined, // present once supabase/schema.sql has been applied
+  version: r.version ?? undefined, // present once the README SQL has been run
 });
 
 export const GET = () =>

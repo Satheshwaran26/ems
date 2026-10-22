@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test lib/validate.test.ts"
+    "test": "node --test lib/employees.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

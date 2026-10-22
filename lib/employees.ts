@@ -1,7 +1,3 @@
-import { useSyncExternalStore } from "react";
-
-export { DEPARTMENTS } from "./validate";
-
 export interface Employee {
   id: string;
   fullName: string;
@@ -15,104 +11,79 @@ export interface Employee {
 
 export type EmployeeInput = Omit<Employee, "id" | "version">;
 
-interface State {
-  employees: Employee[] | null;
-  error: string; // the latest refresh problem; shown while older data is still on screen
-  truncated: boolean; // the server had more employees than it could send
+// ---------------------------------------------------------------------------
+// Validation rules. The form and the API route both use these, so they always agree.
+// This file has no React code, so the server can import it too.
+// ---------------------------------------------------------------------------
+
+export const DEPARTMENTS = ["Engineering", "Design", "Marketing", "Sales", "Human Resources", "Finance", "Operations", "Customer Support"];
+
+export const LIMITS = {
+  name: 100,
+  jobTitle: 100,
+  email: 254,
+  maxSalary: 9_999_999_999.99, // NUMERIC(12,2)
+  minDate: "1900-01-01",
+  maxDate: "2100-12-31", // future joining dates are allowed (incoming hires)
+};
+
+type Errors = Partial<Record<keyof EmployeeInput, string>>;
+export type Validation = { value: EmployeeInput; errors?: undefined } | { value?: undefined; errors: Errors };
+
+const EMAIL = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+function isRealDate(text: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const date = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
 }
 
-interface Reply {
-  status: number; // 0 means the server could not be reached
-  error?: string;
-  code?: string; // "conflict" when someone else changed the employee first
-  data?: unknown;
-  truncated?: boolean;
-}
-
-const API = "/api/employees";
-const TIMEOUT_MS = 15_000;
-const listeners = new Set<() => void>();
-let state: State = { employees: null, error: "", truncated: false };
-let started = false;
-let latest = 0;
-
-function setState(next: State) {
-  state = next;
-  listeners.forEach((listener) => listener());
-}
-
-async function request(url: string, method = "GET", body?: object): Promise<Reply> {
-  try {
-    const response = await fetch(url, {
-      method,
-      cache: "no-store",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body && JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    const json = (await response.json().catch(() => null)) ?? {};
-    return response.ok ? { ...json, status: response.status } : { status: response.status, error: json.error ?? `Request failed (${response.status}).`, code: json.code };
-  } catch {
-    return { status: 0, error: "Could not reach the server. Check your connection." };
+/**
+ * Checks an unknown value (form state or request body) and returns the cleaned employee.
+ * Only the six known fields are read, so extras such as `id` or `created_at` are ignored.
+ * Policies: salary must be a JSON number with at most 2 decimals; text is trimmed, never truncated;
+ * email is trimmed and lower-cased.
+ */
+export function validateEmployee(raw: unknown): Validation {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { errors: { fullName: "Request body must be an object with the employee fields." } };
   }
+  const b = raw as Record<string, unknown>;
+  const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const errors: Errors = {};
+
+  const fullName = text(b.fullName);
+  if (!fullName) errors.fullName = "Full name is required.";
+  else if (fullName.length > LIMITS.name) errors.fullName = `Full name must be at most ${LIMITS.name} characters.`;
+
+  const email = text(b.email).toLowerCase();
+  if (!email) errors.email = "Email is required.";
+  else if (email.length > LIMITS.email) errors.email = `Email must be at most ${LIMITS.email} characters.`;
+  else if (!EMAIL.test(email) || email.split(".").pop()!.length < 2) errors.email = "Enter a valid email address.";
+
+  const department = typeof b.department === "string" ? b.department : "";
+  if (!department) errors.department = "Department is required.";
+  else if (!DEPARTMENTS.includes(department)) errors.department = "Choose a department from the list.";
+
+  const jobTitle = text(b.jobTitle);
+  if (!jobTitle) errors.jobTitle = "Job title is required.";
+  else if (jobTitle.length > LIMITS.jobTitle) errors.jobTitle = `Job title must be at most ${LIMITS.jobTitle} characters.`;
+
+  const salary = b.salary;
+  if (salary === undefined || salary === null || salary === "") errors.salary = "Salary is required.";
+  else if (typeof salary !== "number" || !Number.isFinite(salary)) errors.salary = "Salary must be a number.";
+  else if (salary < 0) errors.salary = "Salary must be 0 or more.";
+  else if (salary > LIMITS.maxSalary) errors.salary = "Salary is too large.";
+  else if (Math.abs(salary * 100 - Math.round(salary * 100)) > 1e-6) errors.salary = "Salary can have at most 2 decimal places.";
+
+  const joiningDate = typeof b.joiningDate === "string" ? b.joiningDate : "";
+  if (!joiningDate) errors.joiningDate = "Joining date is required.";
+  else if (!isRealDate(joiningDate)) errors.joiningDate = "Joining date must be a real date (YYYY-MM-DD).";
+  else if (joiningDate < LIMITS.minDate || joiningDate > LIMITS.maxDate) errors.joiningDate = `Joining date must be between ${LIMITS.minDate} and ${LIMITS.maxDate}.`;
+
+  if (Object.keys(errors).length) return { errors };
+  return { value: { fullName, email, department, jobTitle, salary: salary as number, joiningDate } };
 }
 
-function isEmployee(value: unknown): value is Employee {
-  const e = value as Record<string, unknown> | null;
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    ["id", "fullName", "email", "department", "jobTitle", "joiningDate"].every((key) => typeof e[key] === "string") &&
-    typeof e.salary === "number" &&
-    Number.isFinite(e.salary)
-  );
-}
-
-export async function reload() {
-  const ticket = ++latest;
-  const reply = await request(API);
-  if (ticket !== latest) return; // a newer refresh is already running; ignore this stale answer
-  if (!reply.error && Array.isArray(reply.data) && reply.data.every(isEmployee)) {
-    setState({ employees: reply.data, error: "", truncated: reply.truncated === true });
-  } else {
-    setState({ ...state, error: reply.error ?? "The server sent data in an unexpected format." });
-  }
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  if (!started) {
-    started = true;
-    reload();
-  }
-  return () => void listeners.delete(listener);
-}
-
-/** The latest state, for code that runs after an await and cannot rely on a render. */
-export const current = () => state;
-
-export function useEmployees(): State {
-  return useSyncExternalStore(subscribe, () => state, () => state);
-}
-
-export interface Result {
-  error: string | null; // problem with the change itself
-  gone?: boolean; // the employee no longer exists
-  conflict?: boolean; // someone else changed the employee first
-}
-
-async function change(url: string, method: string, body?: object): Promise<Result> {
-  const reply = await request(url, method, body);
-  // Refresh after success (to show the change), after a conflict or missing row (to show the real data),
-  // and after a network or server failure (we cannot tell whether the change was applied).
-  if (!reply.error || [404, 409].includes(reply.status) || reply.status === 0 || reply.status >= 500) await reload();
-  if (reply.status === 0) {
-    return { error: "Could not confirm whether the change was saved. The list is refreshing; check it before trying again." };
-  }
-  return { error: reply.error ?? null, gone: reply.status === 404, conflict: reply.code === "conflict" };
-}
-
-export const saveEmployee = (input: EmployeeInput, id?: string, version?: number) =>
-  change(id ? `${API}?id=${encodeURIComponent(id)}` : API, id ? "PUT" : "POST", { ...input, version });
-
-export const deleteEmployee = (id: string) => change(`${API}?id=${encodeURIComponent(id)}`, "DELETE");
+/** One readable sentence for the UI. */
+export const describe = (errors: Errors) => Object.values(errors).join(" ");

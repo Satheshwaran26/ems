@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { validateEmployee } from "./validate.ts";
+import { validateEmployee } from "./employees.ts";
 
 const good = { fullName: "Asha Rao", email: "asha@example.com", department: "Engineering", jobTitle: "Engineer", salary: 900000, joiningDate: "2024-01-15" };
 const errorsFor = (changes: object) => validateEmployee({ ...good, ...changes }).errors ?? {};

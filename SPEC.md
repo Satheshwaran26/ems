@@ -10,11 +10,11 @@ This file has two parts: **Part A** describes how the app is built (security, AP
 
 ### Security: locking the database down
 
-By default the app uses the publishable key, which is public by design. The setup in [`supabase/schema.sql`](supabase/schema.sql) lets that key read and change every employee, including salaries, without going through the app. To close that gap:
+By default the app uses the publishable key, which is public by design. The SQL in the [README](README.md) lets that key read and change every employee, including salaries, without going through the app. To close that gap:
 
 1. In Supabase open **Project Settings → API Keys** and copy the **secret** key.
 2. Add it to `.env` as `SUPABASE_SECRET_KEY="sb_secret_..."`. Never prefix it with `NEXT_PUBLIC_`. On a host such as Vercel, set it in the host's environment variables too.
-3. In the SQL Editor run `drop policy if exists "app can read and write employees" on employees;` (the "Option B" line at the bottom of `schema.sql`).
+3. In the SQL Editor run `drop policy if exists "app can read and write employees" on employees;` (the "Option B" line at the bottom of the README SQL).
 
 The server then uses the secret key, and the public key can no longer touch the table. The app still has no login, so anyone who can open the site can use it.
 
@@ -29,7 +29,7 @@ All responses are JSON and uncached. Success is `{ "data": ... }`; failure is `{
 | `PUT /api/employees?id=N` | 200 updated employee | 400 invalid id or fields, 404 gone, 409 duplicate email or changed by someone else |
 | `DELETE /api/employees?id=N` | 200 `{ id }` | 400 invalid id or body sent, 404 already deleted |
 
-Rules (in [`lib/validate.ts`](lib/validate.ts), used by both the form and the server): text is trimmed and never truncated; email is lower-cased; salary is a JSON number from 0 to 9,999,999,999.99 with at most 2 decimals; joining date is a real date from 1900-01-01 to 2100-12-31 (future dates are allowed); unknown fields such as `id` or `created_at` are ignored. `PUT` may include the `version` it was loaded with to detect edits made by someone else.
+Rules (in [`lib/employees.ts`](lib/employees.ts), used by both the form and the server): text is trimmed and never truncated; email is lower-cased; salary is a JSON number from 0 to 9,999,999,999.99 with at most 2 decimals; joining date is a real date from 1900-01-01 to 2100-12-31 (future dates are allowed); unknown fields such as `id` or `created_at` are ignored. `PUT` may include the `version` it was loaded with to detect edits made by someone else.
 
 ### Architecture
 
@@ -37,10 +37,10 @@ Rules (in [`lib/validate.ts`](lib/validate.ts), used by both the form and the se
 flowchart LR
   subgraph Browser
     P["app/page.tsx<br/>form, search, filter, table"]
-    S["lib/employees.ts<br/>store + fetch client"]
+    S["store + fetch client<br/>(inside app/page.tsx)"]
     P -- "useEmployees() / saveEmployee() / deleteEmployee()" --> S
   end
-  V["lib/validate.ts<br/>shared validation rules"]
+  V["validation rules<br/>(in lib/employees.ts)"]
   subgraph Next.js server
     R["app/api/employees/route.ts<br/>GET · POST · PUT · DELETE"]
     SB["supabase-js client<br/>(secret key, or publishable key)"]
@@ -87,7 +87,7 @@ flowchart TD
 
 ### Database (ERD)
 
-There is a single table. The department list is a constant in `lib/validate.ts` (and a check constraint in `supabase/schema.sql`), not a table.
+There is a single table. The department list is a constant in `lib/employees.ts` (and a check constraint in the README SQL), not a table.
 
 ```mermaid
 erDiagram
@@ -116,7 +116,7 @@ flowchart LR
   subgraph L1["1. Browser form (app/page.tsx)"]
     F["All values are strings<br/>salary: '1234.50'<br/>date: '2024-01-15'"]
   end
-  subgraph L2["2. Validated input (lib/validate.ts)"]
+  subgraph L2["2. Validated input (lib/employees.ts)"]
     I["EmployeeInput<br/>text trimmed, email lower-cased<br/>salary: number (2 decimals max)"]
   end
   subgraph L3["3. API (route.ts)"]
@@ -167,22 +167,23 @@ flowchart LR
 | Data | Lives in | Lifetime |
 |---|---|---|
 | Employee records | Supabase PostgreSQL (the only source of truth) | Until deleted; no soft delete or history yet |
-| The loaded list | Browser memory (`lib/employees.ts` store) | Until the page is closed; reloaded after every change |
+| The loaded list | Browser memory (the store inside `app/page.tsx`) | Until the page is closed; reloaded after every change |
 | Form input, search text, department filter | Browser memory (React state) | Until reset or the page is closed; the browser warns about unsaved input |
 | Secrets (`SUPABASE_SECRET_KEY`) | Server environment only | Never sent to the browser |
 | Supabase URL and publishable key | `.env`; the key is public by design | Included in the browser bundle only if used client-side |
 
 ### Files
 
+Six files in total. The database SQL is in the [README](README.md).
+
 | File | What it does |
 |---|---|
-| `app/page.tsx` | The whole page: form, search, filter and table |
-| `lib/validate.ts` | Validation rules shared by the form and the API (with tests) |
-| `lib/employees.ts` | Employee type and the browser code that calls the API |
+| `app/page.tsx` | The page: form, search, filter, table, and the browser store that loads and saves through the API |
+| `lib/employees.ts` | Employee type and the validation rules shared by the form and the API (no React code, so the server can import it) |
+| `lib/employees.test.ts` | Tests for the validation rules |
 | `app/api/employees/route.ts` | The only backend file: GET, POST, PUT and DELETE against Supabase |
 | `app/layout.tsx` | Root layout |
 | `app/globals.css` | Tailwind import and base colours |
-| `supabase/schema.sql` | The database schema, rules and access policy to run in Supabase |
 
 ---
 
